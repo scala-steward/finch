@@ -2,7 +2,7 @@ package io.finch
 
 import cats.{Alternative, Applicative, ApplicativeError, Id, Monad, MonadError}
 import cats.data.NonEmptyList
-import cats.effect.{Effect, Sync}
+import cats.effect.{Effect, Resource, Sync}
 import cats.syntax.all._
 import com.twitter.concurrent.AsyncStream
 import com.twitter.finagle.Service
@@ -17,6 +17,7 @@ import com.twitter.io.{Buf, Reader}
 import io.finch.endpoint._
 import io.finch.internal._
 import io.finch.items.RequestItem
+import java.io.InputStream
 import scala.reflect.ClassTag
 import shapeless._
 import shapeless.ops.adjoin.Adjoin
@@ -573,6 +574,59 @@ object Endpoint {
     new Endpoint[F, A] {
       final def apply(input: Input): Result[F, A] =
         EndpointResult.Matched(input, Trace.empty, F.suspend(foa))
+    }
+
+  /**
+   * Creates an [[Endpoint]] that serves a Java resource, located at `path`, as a static content.
+   * The returned endpoint will only match `GET` requests with path identical to resource's.
+   *
+   * This could be especially useful in local development, when throughput and latency matter less
+   * than quick iterations. These means, however, are not recommended for production usage. Web
+   * servers (Nginx, Apache) will do much better job serving static files.
+   *
+   * To make it harder to misuse, this endpoint doesn't "shift" the thread pool to run blocking IO
+   * operations, therefor blocks the caller's thread when being run (Finagle's worker pool).
+   *
+   * Example project structure:
+   *
+   * {{{
+   *   ├── scala
+   *   │   └── Main.scala
+   *   └── resources
+   *       ├── index.html
+   *       └── script.js
+   * }}}
+   *
+   * Example bootstrap:
+   *
+   * {{{
+   *   Bootstrap
+   *     ...
+   *     .serve[Text.Html](Endpoint[IO].resource("/index.html"))
+   *     .serve[Application.Javascript](Endpoint[IO].resource("/script.js"))
+   *     ...
+   * }}}
+   *
+   * @see https://docs.oracle.com/javase/8/docs/technotes/guides/lang/resources.html
+   */
+  def resource[F[_]](path: String)(implicit F: Effect[F]): Endpoint[F, Buf] =
+    new Endpoint[F, Buf] {
+      private def readLoop(left: Buf, stream: InputStream): F[Buf] = F.suspend {
+        val buffer = new Array[Byte](1024)
+        val n = stream.read(buffer)
+        if (n == -1) F.pure(left)
+        else readLoop(left.concat(Buf.ByteArray.Owned(buffer, 0, n)), stream)
+      }
+
+      final def apply(input: Input): Result[F, Buf] = {
+        val req = input.request
+        if (req.method != FinagleMethod.Get || req.uri != path) EndpointResult.NotMatched[F]
+        else {
+          val stream = Resource.fromAutoCloseable(F.delay(getClass.getResourceAsStream(path)))
+          val output = stream.use(is => readLoop(Buf.Empty, is)).map(buf => Output.payload(buf))
+          EndpointResult.Matched(input.withRoute(Nil), Trace.empty, output)
+        }
+      }
     }
 
   /**

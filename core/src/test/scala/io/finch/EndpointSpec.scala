@@ -8,6 +8,7 @@ import cats.effect.IO
 import cats.laws.discipline.AlternativeTests
 import cats.laws.discipline.SemigroupalTests.Isomorphisms
 import com.twitter.finagle.http.{Cookie, Method, Request}
+import com.twitter.io.Buf
 import io.finch.data.Foo
 import scala.concurrent.duration.Duration
 import shapeless._
@@ -362,5 +363,13 @@ class EndpointSpec extends FinchSpec {
     an[Errors] shouldBe thrownBy (
       endpoint(Input.get("/index", "testEndpoint" -> "a")).awaitValueUnsafe(Duration(10, TimeUnit.SECONDS))
     )
+  }
+
+  it should "load resource" in {
+    val r = resource("/test.txt")
+
+    r(Input.get("/foo")).awaitOutputUnsafe() shouldBe None
+    r(Input.post("/")).awaitOutputUnsafe() shouldBe None
+    r(Input.get("/test.txt")).awaitValueUnsafe() shouldBe Some(Buf.Utf8("foo bar baz\n"))
   }
 }

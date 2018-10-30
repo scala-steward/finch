@@ -96,6 +96,12 @@ trait EndpointModule[F[_]] {
     Endpoint.liftOutputAsync[F, A](foa)
 
   /**
+   * An alias for [[Endpoint.resource]].
+   */
+  def resource(path: String)(implicit F: Effect[F]): Endpoint[F, Buf] =
+    Endpoint.resource[F](path)
+
+  /**
    * An alias for [[Endpoint.root]].
    */
   def root(implicit F: Effect[F]): Endpoint[F, Request] =
