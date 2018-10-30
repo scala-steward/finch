@@ -2,7 +2,7 @@ package io.finch
 
 import cats.Applicative
 import cats.data.NonEmptyList
-import cats.effect.{Effect, Sync}
+import cats.effect.{ContextShift, Effect, Sync}
 import com.twitter.concurrent.AsyncStream
 import com.twitter.finagle.http.{Cookie, Request}
 import com.twitter.finagle.http.exp.Multipart
@@ -94,6 +94,12 @@ trait EndpointModule[F[_]] {
    */
   def liftOutputAsync[A](foa: => F[Output[A]])(implicit F: Sync[F]): Endpoint[F, A] =
     Endpoint.liftOutputAsync[F, A](foa)
+
+  /**
+   * An alias for [[Endpoint.resource]].
+   */
+  def resource(path: String)(implicit F: Effect[F]): Endpoint[F, Buf] =
+    Endpoint.resource[F](path)
 
   /**
    * An alias for [[Endpoint.root]].

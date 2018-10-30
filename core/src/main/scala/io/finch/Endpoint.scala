@@ -2,7 +2,7 @@ package io.finch
 
 import cats.{Alternative, Applicative, ApplicativeError, Id, Monad, MonadError}
 import cats.data.NonEmptyList
-import cats.effect.{Effect, Sync}
+import cats.effect.{Effect, Resource, Sync}
 import cats.syntax.all._
 import com.twitter.concurrent.AsyncStream
 import com.twitter.finagle.Service
@@ -17,6 +17,7 @@ import com.twitter.io.{Buf, Reader}
 import io.finch.endpoint._
 import io.finch.internal._
 import io.finch.items.RequestItem
+import java.io.InputStream
 import scala.reflect.ClassTag
 import shapeless._
 import shapeless.ops.adjoin.Adjoin
@@ -573,6 +574,29 @@ object Endpoint {
     new Endpoint[F, A] {
       final def apply(input: Input): Result[F, A] =
         EndpointResult.Matched(input, Trace.empty, F.suspend(foa))
+    }
+
+  /**
+   * Wraps a resource `path` with [[Endpoint]].
+   */
+  def resource[F[_]](path: String)(implicit F: Effect[F]): Endpoint[F, Buf] =
+    new Endpoint[F, Buf] {
+      private def readLoop(left: Buf, stream: InputStream): F[Buf] = F.suspend {
+        val buffer = new Array[Byte](1024)
+        val n = stream.read(buffer)
+        if (n == -1) F.pure(left)
+        else readLoop(left.concat(Buf.ByteArray.Owned(buffer, 0, n)), stream)
+      }
+
+      final def apply(input: Input): Result[F, Buf] = {
+        val req = input.request
+        if (req.method != FinagleMethod.Get || req.uri != path) EndpointResult.NotMatched[F]
+        else {
+          val stream = Resource.fromAutoCloseable(F.delay(getClass.getResourceAsStream(path)))
+          val output = stream.use(is => readLoop(Buf.Empty, is)).map(buf => Output.payload(buf))
+          EndpointResult.Matched(input.withRoute(Nil), Trace.empty, output)
+        }
+      }
     }
 
   /**
